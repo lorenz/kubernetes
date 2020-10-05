@@ -28,6 +28,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/removeall"
 	"k8s.io/kubernetes/pkg/volume"
 	volumetypes "k8s.io/kubernetes/pkg/volume/util/types"
+	"k8s.io/utils/mount"
 )
 
 // ListVolumesForPod returns a map of the mounted volumes for the given pod.
@@ -120,6 +121,24 @@ func (kl *Kubelet) cleanupOrphanedPodDirs(pods []*v1.Pod, runningPods []*kubecon
 			klog.V(3).Infof("Orphaned pod %q found, but volumes are not cleaned up", uid)
 			continue
 		}
+
+		// If there are any volume-subpaths, make an attempt to clean them up. This needs to be done
+		// before cleaning up volumes to make sure everything is unmounted before attempting to
+		// remove the underlying volumes.
+		volumeSubpathExists, err := kl.podVolumeSubpathsDirExists(uid)
+		if err != nil {
+			orphanVolumeErrors = append(orphanVolumeErrors, fmt.Errorf("orphaned pod %q found, but error %v occurred during reading of volume-subpaths dir from disk", uid, err))
+			continue
+		}
+		if volumeSubpathExists {
+			if err := kl.subpather.CleanAllSubPaths(kl.getPodDir(uid)); err != nil {
+				orphanVolumeErrors = append(orphanVolumeErrors, fmt.Errorf("orphaned pod %q found, but failed to remove volume subpaths still present on disk: %w", uid, err))
+				continue
+			} else {
+				klog.Warningf("Removed dangling subpath directories for orphaned pod %q", uid)
+			}
+		}
+
 		// If there are still volume directories, do not delete directory
 		volumePaths, err := kl.getPodVolumePathListFromDisk(uid)
 		if err != nil {
@@ -127,19 +146,20 @@ func (kl *Kubelet) cleanupOrphanedPodDirs(pods []*v1.Pod, runningPods []*kubecon
 			continue
 		}
 		if len(volumePaths) > 0 {
-			orphanVolumeErrors = append(orphanVolumeErrors, fmt.Errorf("orphaned pod %q found, but volume paths are still present on disk", uid))
-			continue
-		}
-
-		// If there are any volume-subpaths, do not cleanup directories
-		volumeSubpathExists, err := kl.podVolumeSubpathsDirExists(uid)
-		if err != nil {
-			orphanVolumeErrors = append(orphanVolumeErrors, fmt.Errorf("orphaned pod %q found, but error %v occurred during reading of volume-subpaths dir from disk", uid, err))
-			continue
-		}
-		if volumeSubpathExists {
-			orphanVolumeErrors = append(orphanVolumeErrors, fmt.Errorf("orphaned pod %q found, but volume subpaths are still present on disk", uid))
-			continue
+			allVolumesCleanedUp := true
+			for _, path := range volumePaths {
+				if err := mount.CleanupMountPoint(path, kl.mounter, true); err != nil {
+					orphanVolumeErrors = append(orphanVolumeErrors, fmt.Errorf("orphaned pod %q found, but failed to remove volume paths still present on disk: %w", uid, err))
+					allVolumesCleanedUp = false
+					break
+				}
+			}
+			if !allVolumesCleanedUp {
+				// If not all volumes have been cleaned up we cannot clean up the orphaned pod so bail
+				continue
+			} else {
+				klog.Warningf("Removed dangling volume directories for orphaned pod %q", uid)
+			}
 		}
 
 		klog.V(3).Infof("Orphaned pod %q found, removing", uid)

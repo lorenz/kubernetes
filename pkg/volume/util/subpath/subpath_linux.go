@@ -58,6 +58,31 @@ func (sp *subpath) CleanSubPaths(podDir string, volumeName string) error {
 	return doCleanSubPaths(sp.mounter, podDir, volumeName)
 }
 
+func (sp *subpath) CleanAllSubPaths(podDir string) error {
+	subPathDir := filepath.Join(podDir, containerSubPathDirectoryName)
+	klog.V(4).Infof("Cleaning up all subpath mounts for %s", subPathDir)
+
+	volumeDirs, err := ioutil.ReadDir(subPathDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("error reading %s: %s", subPathDir, err)
+	}
+
+	for _, volumeDir := range volumeDirs {
+		if !volumeDir.IsDir() {
+			klog.V(4).Infof("Subpath volume is not a directory: %s", volumeDir.Name())
+			continue
+		}
+		klog.V(4).Infof("Cleaning up subpath mounts for volume %s", volumeDir.Name())
+		if err := doCleanSubPaths(sp.mounter, podDir, volumeDir.Name()); err != nil {
+			return fmt.Errorf("failed cleaning up subpaths for volume %v: %w", volumeDir.Name(), err)
+		}
+	}
+	return nil
+}
+
 func (sp *subpath) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
 	realBase, err := filepath.EvalSymlinks(base)
 	if err != nil {

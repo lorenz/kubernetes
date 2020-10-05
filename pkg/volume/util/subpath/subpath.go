@@ -24,6 +24,9 @@ type Interface interface {
 	// pod volume directory.
 	CleanSubPaths(poodDir string, volumeName string) error
 
+	// CleanAllSubPaths unmounts and removes all subpath mounts and directories.
+	CleanAllSubPaths(podDir string) error
+
 	// PrepareSafeSubpath does everything that's necessary to prepare a subPath
 	// that's 1) inside given volumePath and 2) immutable after this call.
 	//
@@ -83,6 +86,11 @@ func (fs *FakeSubpath) PrepareSafeSubpath(subPath Subpath) (newHostPath string, 
 
 // CleanSubPaths is a fake implementation of CleanSubPaths. It is a noop
 func (fs *FakeSubpath) CleanSubPaths(podDir string, volumeName string) error {
+	return nil
+}
+
+// CleanAllSubPaths is a fake implementation of CleanAllSubPaths. It is a noop
+func (fs *FakeSubpath) CleanAllSubPaths(podDir string) error {
 	return nil
 }
 

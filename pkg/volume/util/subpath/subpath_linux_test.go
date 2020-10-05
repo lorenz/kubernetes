@@ -629,6 +629,71 @@ func TestCleanSubPaths(t *testing.T) {
 	}
 }
 
+func TestCleanAllSubPaths(t *testing.T) {
+	defaultPerm := os.FileMode(0750)
+
+	tests := []struct {
+		name string
+		// Function that prepares directory structure for the test under given
+		// base.
+		prepare     func(base string) error
+		expectError bool
+		unmount     func(path string) error
+	}{
+		{
+			name: "not-exists",
+			prepare: func(base string) error {
+				return nil
+			},
+			expectError: false,
+		},
+		{
+			name: "some-subpaths",
+			prepare: func(base string) error {
+				if err := os.MkdirAll(filepath.Join(base, containerSubPathDirectoryName, "test1", "container1", "0"), defaultPerm); err != nil {
+					return err
+				}
+				if err := os.MkdirAll(filepath.Join(base, containerSubPathDirectoryName, "test2", "container1", "0"), defaultPerm); err != nil {
+					return err
+				}
+				return nil
+			},
+			expectError: false,
+		},
+	}
+
+	for _, test := range tests {
+		klog.V(4).Infof("test %q", test.name)
+		base, err := ioutil.TempDir("", "clean-subpaths-"+test.name+"-")
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		err = test.prepare(base)
+		if err != nil {
+			os.RemoveAll(base)
+			t.Fatalf("failed to prepare test %q: %v", test.name, err.Error())
+		}
+
+		fm := mount.NewFakeMounter([]mount.MountPoint{})
+		fm.UnmountFunc = test.unmount
+
+		subpather := subpath{mounter: fm}
+
+		err = subpather.CleanAllSubPaths(base)
+		if err != nil && !test.expectError {
+			t.Errorf("test %q failed: %v", test.name, err)
+		}
+		if err == nil && test.expectError {
+			t.Errorf("test %q failed: expected error, got success", test.name)
+		}
+		if err = validateDirNotExists(filepath.Join(base, containerSubPathDirectoryName)); err != nil {
+			t.Errorf("test %q failed to clean up: %v", test.name, err)
+		}
+
+		os.RemoveAll(base)
+	}
+}
+
 var (
 	testVol       = "vol1"
 	testPod       = "pod0"
